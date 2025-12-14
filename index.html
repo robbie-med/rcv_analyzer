@@ -1,225 +1,219 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>RCV Checker (95%)</title>
-  <style>
-    body { font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 16px; }
-    h1 { font-size: 20px; margin: 0 0 8px; }
-    .muted { color: #666; font-size: 13px; margin: 0 0 12px; }
-    textarea { width: 100%; height: 220px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; padding: 10px; box-sizing: border-box; }
-    button { padding: 10px 12px; font-size: 15px; margin: 10px 8px 10px 0; }
-    details { border: 1px solid #ddd; border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
-    summary { cursor: pointer; font-weight: 600; }
-    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-    th, td { border-bottom: 1px solid #eee; text-align: left; padding: 8px 6px; font-size: 13px; }
-    .yes { font-weight: 700; }
-    .na { color: #888; }
-    .pill { display: inline-block; padding: 2px 8px; border: 1px solid #ddd; border-radius: 999px; font-size: 12px; margin-left: 6px; color: #444; }
-    .toprow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RCV Checker (95%)</title>
+
+<style>
+body {
+  font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  margin: 16px;
+}
+h1 { font-size: 20px; margin-bottom: 6px; }
+.muted { color: #666; font-size: 13px; margin-bottom: 12px; }
+textarea {
+  width: 100%;
+  height: 220px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  padding: 10px;
+  box-sizing: border-box;
+}
+button { padding: 8px 12px; font-size: 14px; margin: 8px 6px 8px 0; }
+details {
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 10px 0;
+}
+summary { cursor: pointer; font-weight: 600; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+}
+th, td {
+  border-bottom: 1px solid #eee;
+  padding: 6px;
+  font-size: 13px;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid #ccc;
+  border-radius: 999px;
+  font-size: 12px;
+  margin-left: 6px;
+}
+.yes { font-weight: 700; }
+.na { color: #888; }
+</style>
 </head>
+
 <body>
-  <h1>RCV Checker (95%)</h1>
-  <p class="muted">Paste chart labs. Compares adjacent values. Significant if |%Δ| &gt; RCV. H/L flags ignored for math. Dates shown as 14DEC.</p>
 
-  <textarea id="inp" spellcheck="false"></textarea>
+<h1>RCV Checker (95%)</h1>
+<p class="muted">
+Paste chart labs. RCV = |%Δ| &gt; RCV. Trend = longitudinal pattern only.
+</p>
 
-  <div class="toprow">
-    <button id="run">Analyze</button>
-    <button id="clear">Clear</button>
-    <button id="demo">Load Demo</button>
-  </div>
+<textarea id="input"></textarea><br>
+<button onclick="analyze()">Analyze</button>
+<button onclick="clearAll()">Clear</button>
 
-  <div id="out"></div>
+<div id="output"></div>
 
 <script>
-(function () {
-  // ---- RCVs (bidirectional, 95%) ----
-  const RCV = new Map(Object.entries({
-    // CBC
-    "WBC": 32.4,
-    "HGB": 6.8,
-    "HCT": 7.0,
-    "RBC": 7.5,
-    "MCV": 3.5,
-    "PLT": 24.5,
+/* =======================
+   RCV TABLE (95%)
+   ======================= */
+const RCV = {
+  WBC: 32.4,
+  HGB: 6.8,
+  HCT: 7.0,
+  RBC: 7.5,
+  MCV: 3.5,
+  PLT: 24.5,
+  NA: 1.4,
+  K: 14.1,
+  CL: 2.5,
+  CO2: 8.9,
+  HCO3: 8.9,
+  CR: 15.7,
+  CREAT: 15.7,
+  CREATININE: 15.7,
+  GLUCOSE: 16.5
+};
 
-    // Chemistry
-    "NA": 1.4,
-    "CL": 2.5,
-    "HCO3": 8.9,
-    "CO2": 8.9,          // alias
-    "K": 14.1,
-    "CA": 3.5,
-    "MG": 8.0,
-    "PHOS": 17.6,
-    "PHOSPHATE": 17.6,
-    "CR": 15.7,
-    "CREAT": 15.7,
-    "CREATININE": 15.7,
-    "GLUCOSE": 16.5,
-    "ALBUMIN": 6.8,
-    "TOTAL PROTEIN": 5.6,
-    "TP": 5.6,
-    "ALT": 47.8,
-    "AST": 31.6,
-  }));
+const NOISE_FLOOR = 1.0; // %
 
-  const demoText =
-`WBC      9.7   (DEC 14)   10.6   (DEC 13)   H 11.7   (DEC 09)   H 12.2   (DEC 07)
-Hgb      L 9.3   (DEC 14)   L 9.7   (DEC 13)   L 8.9   (DEC 09)   L 8.4   (DEC 08)
-Hct      L 31.1   (DEC 14)   L 32.1   (DEC 13)   L 29.9   (DEC 09)   L 27.9   (DEC 08)
-Plt      245   (DEC 14)   255   (DEC 13)   301    (DEC 09)   247   (DEC 08)
-Na      137   (DEC 14)   139   (DEC 13)   138    (DEC 12)   138   (DEC 11)
-K      3.6   (DEC 14)   3.9   (DEC 13)   L 3.4   (DEC 12)   3.7   (DEC 11)
-Cl      107   (DEC 14)   109   (DEC 13)   104    (DEC 12)   108   (DEC 11)
-Cr      1.14   (DEC 14)   1.11   (DEC 13)   1.30    (DEC 12)   1.48   (DEC 11)
-BUN      24   (DEC 14)   H 30   (DEC 13)   H 42   (DEC 12)   H 46   (DEC 11)
-Glucose      H 134   (DEC 14)   97   (DEC 14)   H 101   (DEC 14)   H 133   (DEC 13)
-Glucose Random        93   (DEC 14)   96   (DEC 13)    H 104   (DEC 12)   H 154   (DEC 11)
-PT      H 16.1   (DEC 07)
-INR      H 1.3   (DEC 07)`;
+// =======================
+// Utility
+// =======================
+function norm(s) {
+  return s.trim().toUpperCase().replace(/\s+/g, " ");
+}
 
-  const $inp = document.getElementById("inp");
-  const $out = document.getElementById("out");
+function fmtDate(d) {
+  const m = d.match(/^([A-Z]{3})\s+(\d{1,2})$/);
+  if (!m) return d;
+  return m[2].padStart(2,"0") + m[1];
+}
 
-  function normAnalyte(name) {
-    return name.trim().toUpperCase().replace(/\s+/g, " ");
+function pct(newV, oldV) {
+  if (oldV === 0) return null;
+  return (newV - oldV) / oldV * 100;
+}
+
+// =======================
+// Parsing
+// =======================
+function parseLine(line) {
+  const nameMatch = line.match(/^([A-Za-z][A-Za-z0-9\s\/\-]+?)\s+(?=[HL]?\s*\d|\()/);
+  const analyte = norm(nameMatch ? nameMatch[1] : line.split(/\s+/)[0]);
+
+  const re = /(?:\b[HL]\b\s*)?([-+]?\d+(?:\.\d+)?)\s*\(\s*([A-Z]{3}\s+\d{1,2})\s*\)/g;
+  const pts = [];
+  let m;
+  while ((m = re.exec(line.toUpperCase())) !== null) {
+    pts.push({ value: parseFloat(m[1]), date: m[2] });
+  }
+  return pts.length ? { analyte, pts } : null;
+}
+
+// =======================
+// Trend Analyzer
+// =======================
+function trendAnalyze(values, analyte) {
+  if (values.length < 3) return "INSUFFICIENT";
+
+  const deltas = [];
+  for (let i = 0; i < values.length - 1; i++) {
+    const d = pct(values[i], values[i+1]);
+    if (d === null || Math.abs(d) < NOISE_FLOOR) deltas.push(0);
+    else deltas.push(Math.sign(d));
   }
 
-  function fmtDate(dateRaw) {
-    // input like "DEC 14" -> "14DEC"
-    const m = dateRaw.trim().toUpperCase().match(/^([A-Z]{3})\s+(\d{1,2})$/);
-    if (!m) return dateRaw.trim();
-    const mon = m[1];
-    const day = String(parseInt(m[2], 10)).padStart(2, "0");
-    return `${day}${mon}`;
+  const nonZero = deltas.filter(x => x !== 0);
+  const net = pct(values[0], values[values.length - 1]);
+  const netSign = net === null || Math.abs(net) < NOISE_FLOOR ? 0 : Math.sign(net);
+
+  if (nonZero.length === 0) return "STABLE";
+
+  if (nonZero.every(x => x === nonZero[0])) {
+    return nonZero[0] === 1 ? "MONOTONIC ↑" : "MONOTONIC ↓";
   }
 
-  function pctChange(newV, oldV) {
-    if (oldV === 0) return null;
-    return ((newV - oldV) / oldV) * 100.0;
-  }
-
-  function rcvFor(analyte) {
-    if (RCV.has(analyte)) return RCV.get(analyte);
-    const collapsed = analyte.replace(/\s+/g, "");
-    if (RCV.has(collapsed)) return RCV.get(collapsed);
-    return null;
-  }
-
-  function parseLine(line) {
-    const raw = line.trim();
-    if (!raw) return null;
-
-    // analyte name: text up to first number or '('
-    let name = null;
-    const m = raw.match(/^([A-Za-z][A-Za-z0-9\s\/\-]+?)\s+(?=([HL]\s*)?\d|\()/);
-    name = m ? m[1] : raw.split(/\s+/)[0];
-    const analyte = normAnalyte(name);
-
-    // value chunks: optional H/L, number, (MON DAY)
-    const re = /(?:\b[HL]\b\s*)?([-+]?\d+(?:\.\d+)?)\s*\(\s*([A-Z]{3}\s+\d{1,2})\s*\)/g;
-    const points = [];
-    let match;
-    while ((match = re.exec(raw.toUpperCase())) !== null) {
-      const v = parseFloat(match[1]);
-      const d = match[2].trim();
-      if (!Number.isFinite(v)) continue;
-      points.push({ value: v, dateRaw: d });
+  let run = 1;
+  for (let i = 1; i < nonZero.length; i++) {
+    if (nonZero[i] === nonZero[i-1]) run++;
+    else run = 1;
+    if (run >= 2 && netSign === nonZero[i]) {
+      return netSign === 1 ? "SUSTAINED ↑" : "SUSTAINED ↓";
     }
-    return { analyte, points };
   }
 
-  function render(results) {
-    $out.innerHTML = "";
-    if (results.length === 0) {
-      $out.innerHTML = `<p class="muted">No analytes parsed. Make sure values look like: 9.7 (DEC 14)</p>`;
-      return;
-    }
+  const rcv = RCV[analyte] ?? null;
+  if (rcv && Math.abs(net) < rcv / 2) return "STABLE";
 
-    for (const item of results) {
-      const { analyte, points, rcv } = item;
-      const rcvLabel = (rcv == null) ? "N/A" : `±${rcv}%`;
-      const pill = `<span class="pill">RCV ${rcvLabel}</span><span class="pill">n=${points.length}</span>`;
+  return "VARIABLE";
+}
 
-      const det = document.createElement("details");
-      det.innerHTML = `<summary>${analyte} ${pill}</summary>`;
-      const latest = points[0];
-      const latestLine = `<div style="margin-top:8px;font-size:13px;">
-        Latest: <b>${latest.value}</b> on <b>${fmtDate(latest.dateRaw)}</b>
-        ${rcv == null ? `<span class="pill na">No RCV configured</span>` : ""}
-      </div>`;
+// =======================
+// Main
+// =======================
+function analyze() {
+  const out = document.getElementById("output");
+  out.innerHTML = "";
 
-      let table = "";
-      if (points.length <= 1) {
-        table = `<p class="muted">Only one value present; no comparisons.</p>`;
-      } else {
-        const rows = [];
-        for (let i = 0; i < points.length - 1; i++) {
-          const newer = points[i];
-          const older = points[i + 1];
-          const pct = pctChange(newer.value, older.value);
-          const pctStr = (pct == null) ? "NA" : (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
-          let sigStr = "NA";
-          let sigClass = "na";
-          if (pct != null && rcv != null) {
-            const sig = Math.abs(pct) > rcv; // strict >
-            sigStr = sig ? "YES" : "NO";
-            sigClass = sig ? "yes" : "";
-          }
-          rows.push(`
-            <tr>
-              <td>${fmtDate(older.dateRaw)}</td>
-              <td>${fmtDate(newer.dateRaw)}</td>
-              <td>${older.value}</td>
-              <td>${newer.value}</td>
-              <td>${pctStr}</td>
-              <td class="${sigClass}">${sigStr}</td>
-            </tr>
-          `);
+  const lines = document.getElementById("input").value.split(/\n/).filter(l => l.trim());
+  for (const line of lines) {
+    const parsed = parseLine(line);
+    if (!parsed) continue;
+
+    const { analyte, pts } = parsed;
+    const values = pts.map(p => p.value);
+    const rcv = RCV[analyte] ?? null;
+
+    let rcvFlag = "NO";
+    let rcvHit = "";
+
+    if (rcv) {
+      for (let i = 0; i < values.length - 1; i++) {
+        const d = pct(values[i], values[i+1]);
+        if (d !== null && Math.abs(d) > rcv) {
+          rcvFlag = "YES";
+          rcvHit = ` (${fmtDate(pts[i+1].date)}→${fmtDate(pts[i].date)})`;
+          break;
         }
-        table = `
-          <table>
-            <thead>
-              <tr>
-                <th>From</th><th>To</th><th>Old</th><th>New</th><th>%Δ</th><th>Significant?</th>
-              </tr>
-            </thead>
-            <tbody>${rows.join("")}</tbody>
-          </table>
-          <p class="muted" style="margin-top:8px;">Rule: Significant if |%Δ| &gt; RCV (95%).</p>
-        `;
       }
-
-      det.insertAdjacentHTML("beforeend", latestLine + table);
-      $out.appendChild(det);
+    } else {
+      rcvFlag = "NA";
     }
+
+    const trend = trendAnalyze(values, analyte);
+
+    const box = document.createElement("details");
+    box.innerHTML = `
+      <summary>${analyte}
+        <span class="badge">RCV ${rcv ? "±"+rcv+"%" : "NA"}</span>
+        <span class="badge">n=${values.length}</span>
+      </summary>
+      <div style="margin-top:8px;font-size:13px;">
+        RCV: <b>${rcvFlag}${rcvHit}</b><br>
+        Trend: <b>${trend}</b>
+      </div>
+    `;
+    out.appendChild(box);
   }
+}
 
-  function analyze() {
-    const lines = $inp.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    const results = [];
-    for (const ln of lines) {
-      const parsed = parseLine(ln);
-      if (!parsed || !parsed.points || parsed.points.length === 0) continue;
-      const analyte = parsed.analyte;
-      const rcv = rcvFor(analyte);
-      results.push({ analyte, points: parsed.points, rcv });
-    }
-    render(results);
-  }
-
-  document.getElementById("run").addEventListener("click", analyze);
-  document.getElementById("clear").addEventListener("click", () => { $inp.value = ""; $out.innerHTML = ""; });
-  document.getElementById("demo").addEventListener("click", () => { $inp.value = demoText; analyze(); });
-
-  // load demo by default for first open
-  $inp.value = demoText;
-  analyze();
-})();
+function clearAll() {
+  document.getElementById("input").value = "";
+  document.getElementById("output").innerHTML = "";
+}
 </script>
+
 </body>
 </html>
