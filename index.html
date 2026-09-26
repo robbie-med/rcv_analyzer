@@ -3,217 +3,75 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RCV Checker (95%)</title>
-
-<style>
-body {
-  font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  margin: 16px;
-}
-h1 { font-size: 20px; margin-bottom: 6px; }
-.muted { color: #666; font-size: 13px; margin-bottom: 12px; }
-textarea {
-  width: 100%;
-  height: 220px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 13px;
-  padding: 10px;
-  box-sizing: border-box;
-}
-button { padding: 8px 12px; font-size: 14px; margin: 8px 6px 8px 0; }
-details {
-  border: 1px solid #ddd;
-  border-radius: 10px;
-  padding: 10px 12px;
-  margin: 10px 0;
-}
-summary { cursor: pointer; font-weight: 600; }
-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 8px;
-}
-th, td {
-  border-bottom: 1px solid #eee;
-  padding: 6px;
-  font-size: 13px;
-}
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border: 1px solid #ccc;
-  border-radius: 999px;
-  font-size: 12px;
-  margin-left: 6px;
-}
-.yes { font-weight: 700; }
-.na { color: #888; }
-</style>
+<title>RCV Checker</title>
+<meta name="description" content="Is a change in a lab result real? Reference change values from EFLM biological variation data, with caveats and cross-lab checks. English, français, 한국어.">
+<link rel="stylesheet" href="css/style.css">
 </head>
-
 <body>
 
-<h1>RCV Checker (95%)</h1>
-<p class="muted">
-Paste chart labs. RCV = |%Δ| &gt; RCV. Trend = longitudinal pattern only.
-</p>
+<header class="top">
+  <div class="brand">
+    <h1 data-i18n="title">RCV Checker</h1>
+    <p data-i18n="tagline"></p>
+  </div>
+  <div id="lang" class="lang" role="group" aria-label="Language / Langue / 언어">
+    <button type="button" data-lang="en" lang="en">EN</button>
+    <button type="button" data-lang="fr" lang="fr">FR</button>
+    <button type="button" data-lang="ko" lang="ko">한국어</button>
+  </div>
+</header>
 
-<textarea id="input"></textarea><br>
-<button onclick="analyze()">Analyze</button>
-<button onclick="clearAll()">Clear</button>
-
-<div id="output"></div>
-
-<script>
-/* =======================
-   RCV TABLE (95%)
-   ======================= */
-const RCV = {
-  WBC: 32.4,
-  HGB: 6.8,
-  HCT: 7.0,
-  RBC: 7.5,
-  MCV: 3.5,
-  PLT: 24.5,
-  NA: 1.4,
-  K: 14.1,
-  CL: 2.5,
-  CO2: 8.9,
-  HCO3: 8.9,
-  CR: 15.7,
-  CREAT: 15.7,
-  CREATININE: 15.7,
-  GLUCOSE: 16.5
-};
-
-const NOISE_FLOOR = 1.0; // %
-
-// =======================
-// Utility
-// =======================
-function norm(s) {
-  return s.trim().toUpperCase().replace(/\s+/g, " ");
-}
-
-function fmtDate(d) {
-  const m = d.match(/^([A-Z]{3})\s+(\d{1,2})$/);
-  if (!m) return d;
-  return m[2].padStart(2,"0") + m[1];
-}
-
-function pct(newV, oldV) {
-  if (oldV === 0) return null;
-  return (newV - oldV) / oldV * 100;
-}
-
-// =======================
-// Parsing
-// =======================
-function parseLine(line) {
-  const nameMatch = line.match(/^([A-Za-z][A-Za-z0-9\s\/\-]+?)\s+(?=[HL]?\s*\d|\()/);
-  const analyte = norm(nameMatch ? nameMatch[1] : line.split(/\s+/)[0]);
-
-  const re = /(?:\b[HL]\b\s*)?([-+]?\d+(?:\.\d+)?)\s*\(\s*([A-Z]{3}\s+\d{1,2})\s*\)/g;
-  const pts = [];
-  let m;
-  while ((m = re.exec(line.toUpperCase())) !== null) {
-    pts.push({ value: parseFloat(m[1]), date: m[2] });
-  }
-  return pts.length ? { analyte, pts } : null;
-}
-
-// =======================
-// Trend Analyzer
-// =======================
-function trendAnalyze(values, analyte) {
-  if (values.length < 3) return "INSUFFICIENT";
-
-  const deltas = [];
-  for (let i = 0; i < values.length - 1; i++) {
-    const d = pct(values[i], values[i+1]);
-    if (d === null || Math.abs(d) < NOISE_FLOOR) deltas.push(0);
-    else deltas.push(Math.sign(d));
-  }
-
-  const nonZero = deltas.filter(x => x !== 0);
-  const net = pct(values[0], values[values.length - 1]);
-  const netSign = net === null || Math.abs(net) < NOISE_FLOOR ? 0 : Math.sign(net);
-
-  if (nonZero.length === 0) return "STABLE";
-
-  if (nonZero.every(x => x === nonZero[0])) {
-    return nonZero[0] === 1 ? "MONOTONIC ↑" : "MONOTONIC ↓";
-  }
-
-  let run = 1;
-  for (let i = 1; i < nonZero.length; i++) {
-    if (nonZero[i] === nonZero[i-1]) run++;
-    else run = 1;
-    if (run >= 2 && netSign === nonZero[i]) {
-      return netSign === 1 ? "SUSTAINED ↑" : "SUSTAINED ↓";
-    }
-  }
-
-  const rcv = RCV[analyte] ?? null;
-  if (rcv && Math.abs(net) < rcv / 2) return "STABLE";
-
-  return "VARIABLE";
-}
-
-// =======================
-// Main
-// =======================
-function analyze() {
-  const out = document.getElementById("output");
-  out.innerHTML = "";
-
-  const lines = document.getElementById("input").value.split(/\n/).filter(l => l.trim());
-  for (const line of lines) {
-    const parsed = parseLine(line);
-    if (!parsed) continue;
-
-    const { analyte, pts } = parsed;
-    const values = pts.map(p => p.value);
-    const rcv = RCV[analyte] ?? null;
-
-    let rcvFlag = "NO";
-    let rcvHit = "";
-
-    if (rcv) {
-      for (let i = 0; i < values.length - 1; i++) {
-        const d = pct(values[i], values[i+1]);
-        if (d !== null && Math.abs(d) > rcv) {
-          rcvFlag = "YES";
-          rcvHit = ` (${fmtDate(pts[i+1].date)}→${fmtDate(pts[i].date)})`;
-          break;
-        }
-      }
-    } else {
-      rcvFlag = "NA";
-    }
-
-    const trend = trendAnalyze(values, analyte);
-
-    const box = document.createElement("details");
-    box.innerHTML = `
-      <summary>${analyte}
-        <span class="badge">RCV ${rcv ? "±"+rcv+"%" : "NA"}</span>
-        <span class="badge">n=${values.length}</span>
-      </summary>
-      <div style="margin-top:8px;font-size:13px;">
-        RCV: <b>${rcvFlag}${rcvHit}</b><br>
-        Trend: <b>${trend}</b>
+<main>
+  <section class="card inputcard">
+    <label for="input" class="label" data-i18n="inputLabel"></label>
+    <textarea id="input" spellcheck="false" autocomplete="off" data-i18n-ph="placeholder"></textarea>
+    <div class="controls">
+      <div class="btns">
+        <button type="button" id="analyze" class="primary" data-i18n="analyze"></button>
+        <button type="button" id="example" data-i18n="exampleBtn"></button>
+        <button type="button" id="clear" class="ghost" data-i18n="clear"></button>
       </div>
-    `;
-    out.appendChild(box);
-  }
-}
+      <div class="opts">
+        <label><span data-i18n="conf"></span><select id="conf"></select></label>
+        <label><span data-i18n="order"></span><select id="order"></select></label>
+      </div>
+    </div>
+    <p class="hint" data-i18n="formatHint"></p>
+  </section>
 
-function clearAll() {
-  document.getElementById("input").value = "";
-  document.getElementById("output").innerHTML = "";
-}
-</script>
+  <section id="summary" class="summary" aria-live="polite"></section>
+  <section id="alerts" class="alertsbox"></section>
+  <section id="results" class="results"></section>
+  <section id="skipped" class="skipped"></section>
 
+  <details class="card fold" id="method">
+    <summary><h2 data-i18n="methodTitle"></h2></summary>
+    <p data-i18n="methodIntro"></p>
+    <p class="formula" data-i18n="methodFormula"></p>
+    <p data-i18n="methodSources"></p>
+    <h3 data-i18n="generalTitle"></h3>
+    <ul id="general" class="general"></ul>
+    <p class="refs">
+      EFLM Biological Variation Database — <a href="https://biologicalvariation.eu" rel="noopener">biologicalvariation.eu</a> ·
+      Fokkema MR et al. Clin Chem 2006;52:1602–3 (log-normal RCV) ·
+      Fraser CG. Clin Chem 2011;57:1635–7 (RCV) ·
+      Ricos C et al. Scand J Clin Lab Invest 1999;59:491–500.
+    </p>
+  </details>
+
+  <details class="card fold" id="settings">
+    <summary><h2 data-i18n="settingsTitle"></h2></summary>
+    <p data-i18n="settingsIntro"></p>
+    <div class="tablewrap"><table id="settings-table"></table></div>
+    <button type="button" id="reset" class="ghost" data-i18n="reset"></button>
+  </details>
+</main>
+
+<footer><p data-i18n="footer"></p></footer>
+
+<script src="js/analytes.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/core.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>
